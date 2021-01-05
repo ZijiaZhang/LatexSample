@@ -1,0 +1,83 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+
+\title{Coop Report}
+\author{Zijia Zhang }
+\date{December 2020}
+
+\begin{document}
+
+\maketitle
+
+
+
+\begin{abstract}
+    In this report I will investigate different possible implement canary deployment on Kubernetes. The method deploys two different versions of applications and configured the numbers of pods on different versions to be the same as the desired ratio. In most of the case this method splits the traffic approximately the same ratio as we desired.
+\end{abstract}
+
+\tableofcontents
+
+\pagebreak
+
+\section{Introduction}
+\subsection{Containers}
+Container is a way to run the application in an environment that is independent of the current operating system. They are useful because most of our applications will not directly interact with others via environment. Compared to virtual machines, containers runs on top of the host OS and shares the core instead of creating a separate one. Thus it requires less resources and can spin up faster. 
+\subsection{Kubernetes}
+Kubernetes is a management tool for deployment of container groups. It provides means of automated containers deployment, update and maintenance. Kubernetes is an excellent tool for dynamic scaling of online services. Helm charts is a good way to manage the deployed application in Kubernetes. Because our services will be under different loads at different times, we would ideally have just the right amount of containers to handle the incoming request and preserve enough hardware for other services that might under heavy load.
+
+\subsection{Canary Deployment}
+Canary Deployment is a method to roll out to new features with zero downtime, by releasing the new versions to some of the customers and control the ratio of the traffic using the new version of the product to the old one. Since sometimes releasing to a new version involves some uncertainty such as the bug not covered by tests. Using Canary Deployment, we are able to minimize the impact of these conditions by limiting the exposure of the new risky version to our customers. We will then be able to scale up the deployment after it has been tested stable in the production environment. For each deployment in Kubernetes, there are multiple pods associated with it. There will have a load balancer that distributes the incoming traffic to different pods. Different load balancing algorithms will have different results.
+
+\section{Method}
+\subsection{Current Load Balance Algorithms}
+There are several load balance algorithm available and have their advantage and disadvantages:
+\begin{enumerate}
+    \item Random: Request will send to a random worker.
+    \item Round Robin: Round Robin is a simple algorithm that send the requests to worker in rotation. For example, If you have two workers, A and B, the first request will send to the worker A, and the second request will send to worker B, the third request will send to worker A again. This method does not takes account of the current state of each worker, but will require less processing effort to implement.
+    
+    \item Weighted Round Robin: This method takes account for the different processing power of different workers. So we can change the weight on each worker. If worker A is twice as fast as worker B, similar to Round Robin, but the first two request will sent to worker A and one request will send to worker B. This method takes some account of the processing time of each request and still preserve the advantage of simplicity. 
+    
+    \item Source IP: The request are distributed by the Source IP. The request from the same IP will go to the same worker. 
+    \item Least connection/ Least traffic: The load balancer will monitor the connections/traffic of each worker. The request will be send to the worker with least connections/ traffic.
+\end{enumerate}
+
+
+We used a variation of the of `random' algorithm. Our method will keep track of the state of each worker. Once a worker is ready to receive a request, it will send a package to the load balancer. The load balancer will send the request to a random worker that is ready to receive a request. This method will prevent the issue that if a worker hangs processing one request, the load balancer is still sending request to it. The disadvantage is that the worker will need to be modified so it can work with this load balancer.
+
+\subsection{Canary Support}
+Because of this new load balance algorithm, we are not able to use the existing Canary deployment library supports. Our solution is to use Cookiecutter to create a template of Shipwright charts based on Application Chart that every application uses, and then render into Helm manifest. 
+
+\subsubsection{Services and Selector}
+In the base charts, we have the following structure: \\
+\includegraphics[width=\textwidth]{T.png}
+
+The Service will be created based on the version of the application. Therefore, if there are two different version of one application, it will create a separate service. Then a separate service is needed to accept the incoming request and distribute it to two versions of applications with the desired ratio.  
+\\
+\includegraphics[width=0.8\textwidth]{T1.png}
+\\
+This structure will introduce a huge amount of work and modifications on the existing structure. 
+
+\subsection{Our Method}
+We decided to add a new selector on all the workers of one application, and create service base on that. \\
+
+\includegraphics[width=\textwidth]{T2.png}
+
+Using this method, we merge the two version of a application in one Service, and it includes little new code. Because of the feature of the load balance algorithm we choose, the ratio of the traffic to the two versions is roughly the ratio of their workers. By changing the amount of workers, we can control the rate of exposure of the new version. 
+
+\section{Discussion}
+\subsubsection{Advantage}
+\begin{enumerate}
+    \item Little changes on the existing charts, which prevents introducing risky modification on existing structure.
+    \item Will not block other the request if the new version have a long processing time. The request will be redirect to other workers if one of them keep crushing/ cannot finish one request. 
+\end{enumerate}
+
+\subsubsection{Disadvantage}
+\begin{enumerate}
+    \item The traffic will not split between the deployments precisely by the ratio. Even if we have the number of workers at the desired ratio, the request send to each worker still depends on the processing time of each request. 
+\end{enumerate}
+
+\section{Conclusion}
+Our method solves the problem and keeps the existing structure. Even if it will not split the traffic to two deployments precisely with the desired amount, it is more robust and will not suffer from possible catastrophic failure of the new version.
+
+\end{document}
